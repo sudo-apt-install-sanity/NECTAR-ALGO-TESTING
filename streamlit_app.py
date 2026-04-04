@@ -299,6 +299,11 @@ else:
                 st.caption("Affective State Vector")
                 mood = result["asv_description"]
                 st.info(mood["mood_summary"])
+                inference = mood.get("inference", "Rule-based")
+                if "Neural" in inference:
+                    st.success(f"🧠 {inference}")
+                else:
+                    st.warning(f"📐 {inference}")
                 st.metric("Valence",   mood["valence"])
                 st.metric("Arousal",   mood["arousal"])
                 st.metric("Dominance", mood["dominance"])
