@@ -7,6 +7,11 @@ from pipeline import run_pipeline
 from modules.recommender import apply_feedback
 from modules.omdb_client import enrich_recommendations
 from database.db import initialize_db
+from modules.analytics import (
+    get_mood_distribution, get_rating_distribution,
+    get_session_activity, get_attention_trends,
+    get_platform_device_breakdown, get_all_users_summary
+)
 from database.queries import (
     get_all_users, get_or_create_user,
     get_user_sessions, get_user_feedback,
@@ -89,9 +94,10 @@ if run_btn:
     st.session_state["last_session_id"] = None
 
 # ── Main panel ────────────────────────────────────────────────
-tab1, tab2, tab3 = st.tabs(["📊 Pipeline Output",
-                             "🕓 Session History",
-                             "⭐ My Feedback"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Pipeline Output",
+                                   "🕓 Session History",
+                                   "⭐ My Feedback",
+                                   "📈 Analytics"])
 
 # ── Tab 1: Pipeline output ────────────────────────────────────
 with tab1:
@@ -294,3 +300,98 @@ with tab3:
                     st.write("⭐" * f["star_rating"])
                 with c3:
                     st.write(f"{f['created_at']}")
+# ── Tab 4: Analytics ─────────────────────────────────────────
+with tab4:
+    st.header(f"Analytics — {username}")
+
+    sessions = get_session_activity(user_id)
+
+    if not sessions:
+        st.info("No data yet. Run the pipeline a few times to see analytics.")
+    else:
+        # ── Row 1: Summary metrics ────────────────────────────
+        st.subheader("Overview")
+        total_sessions = len(sessions)
+        rating_dist    = get_rating_distribution(user_id)
+        total_ratings  = sum(rating_dist.values())
+        avg_rating     = (
+            sum(k * v for k, v in rating_dist.items()) / total_ratings
+            if total_ratings > 0 else 0
+        )
+        mood_dist = get_mood_distribution(user_id)
+        top_mood  = max(mood_dist, key=mood_dist.get) if mood_dist else "N/A"
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total Sessions",  total_sessions)
+        m2.metric("Total Ratings",   total_ratings)
+        m3.metric("Avg Star Rating", round(avg_rating, 2))
+        m4.metric("Dominant Mood",   top_mood.replace("_", " ") if top_mood != "N/A" else "N/A")
+
+        st.divider()
+
+        # ── Row 2: Mood + Ratings ─────────────────────────────
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("Mood Distribution")
+            if mood_dist:
+                mood_labels = [k.replace("_", " ") for k in mood_dist.keys()]
+                mood_values = list(mood_dist.values())
+                for label, val in zip(mood_labels, mood_values):
+                    pct = val / sum(mood_values)
+                    st.write(f"**{label}**")
+                    st.progress(pct, text=f"{val} sessions ({pct*100:.0f}%)")
+            else:
+                st.info("No mood data yet.")
+
+        with col2:
+            st.subheader("Star Rating Distribution")
+            if rating_dist:
+                for star in range(1, 6):
+                    count = rating_dist.get(star, 0)
+                    total = sum(rating_dist.values())
+                    pct   = count / total if total > 0 else 0
+                    st.write(f"{'⭐' * star}")
+                    st.progress(pct, text=f"{count} ratings ({pct*100:.0f}%)")
+            else:
+                st.info("No ratings yet.")
+
+        st.divider()
+
+        # ── Row 3: Emotion trends ─────────────────────────────
+        st.subheader("Emotion Trends Over Sessions")
+        trends = get_attention_trends(user_id)
+
+        if len(trends) > 1:
+            import pandas as pd
+            df_trends = pd.DataFrame(trends)
+            df_trends["session"] = range(1, len(df_trends) + 1)
+            st.line_chart(
+                df_trends.set_index("session")[["valence", "arousal", "dominance"]]
+            )
+            st.caption("Valence = mood positivity | Arousal = engagement | Dominance = control")
+        else:
+            st.info("Need at least 2 sessions to show trends.")
+
+        st.divider()
+
+        # ── Row 4: Device + Platform breakdown ────────────────
+        st.subheader("Device & Platform Usage")
+        breakdown = get_platform_device_breakdown(user_id)
+
+        if breakdown:
+            for b in breakdown:
+                st.write(f"**{b['device']}** on **{b['platform']}** — "
+                         f"{b['count']} session{'s' if b['count'] > 1 else ''}")
+        else:
+            st.info("No device data yet.")
+
+        st.divider()
+
+        # ── Row 5: All users summary ──────────────────────────
+        st.subheader("All Users Summary")
+        summary = get_all_users_summary()
+        if summary:
+            import pandas as pd
+            df_summary = pd.DataFrame(summary)
+            st.dataframe(df_summary, use_container_width=True)
