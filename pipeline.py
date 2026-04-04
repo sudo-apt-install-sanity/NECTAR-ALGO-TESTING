@@ -8,13 +8,16 @@ from modules.emotion_encoder     import encode_emotion, describe_asv
 from modules.user_representation import build_dur
 from modules.fusion_attention    import build_cue
 from modules.recommender         import get_recommendations, apply_feedback
+from database.queries            import save_session, get_session_history_vectors
 
 def run_pipeline(device, platform, time_slot, day, session_duration,
                  skip_rate, completion_rate, rewatch_ratio,
-                 dwell_time, review_text, session_history=None, top_n=10):
+                 dwell_time, review_text,
+                 user_id=None, top_n=10):
     """
     Full NECTAR pipeline: raw user data → movie recommendations.
-    Returns all intermediate outputs for UI display.
+    If user_id is provided, loads session history from DB and saves
+    the current session after running.
     """
 
     # Load data
@@ -30,6 +33,13 @@ def run_pipeline(device, platform, time_slot, day, session_duration,
                          rewatch_ratio, dwell_time, review_text)
     asv_description = describe_asv(asv)
 
+    # Load session history from DB if user is logged in
+    session_history = None
+    if user_id is not None:
+        session_history = get_session_history_vectors(user_id, limit=5)
+        if len(session_history) == 0:
+            session_history = None
+
     # Stage 3: Dynamic user representation
     dur = build_dur(csv, asv, session_history)
 
@@ -41,18 +51,32 @@ def run_pipeline(device, platform, time_slot, day, session_duration,
         cue, asv, movies, top_n=top_n, ratings=ratings
     )
 
+    # Save session to DB if user is logged in
+    session_id = None
+    if user_id is not None:
+        inputs = {
+            "device": device, "platform": platform,
+            "time_slot": time_slot, "day": day,
+            "session_duration": session_duration,
+            "skip_rate": skip_rate, "completion_rate": completion_rate,
+            "rewatch_ratio": rewatch_ratio, "dwell_time": dwell_time,
+            "review_text": review_text
+        }
+        session_id = save_session(user_id, inputs, mood_key, csv, asv)
+
     return {
-        "csv":                csv,
-        "csv_description":    csv_description,
-        "asv":                asv,
-        "asv_description":    asv_description,
-        "dur_shape":          dur.shape,
-        "cue_shape":          cue.shape,
-        "attention_weights":  attention_weights,
-        "mood_key":           mood_key,
-        "preferred_genres":   preferred_genres,
-        "recommendations":    recommendations,
-        "movies":             movies,
+        "csv":               csv,
+        "csv_description":   csv_description,
+        "asv":               asv,
+        "asv_description":   asv_description,
+        "dur_shape":         dur.shape,
+        "cue_shape":         cue.shape,
+        "attention_weights": attention_weights,
+        "mood_key":          mood_key,
+        "preferred_genres":  preferred_genres,
+        "recommendations":   recommendations,
+        "movies":            movies,
+        "session_id":        session_id,
     }
 
 
@@ -62,20 +86,12 @@ if __name__ == "__main__":
         time_slot="night",      day="weekend",
         session_duration=45,    skip_rate=0.7,
         completion_rate=0.4,    rewatch_ratio=0.1,
-        dwell_time=8.0,         review_text="it was okay I guess"
+        dwell_time=8.0,         review_text="it was okay I guess",
+        user_id=1
     )
-
     print("=== NECTAR PIPELINE OUTPUT ===\n")
-    print(f"[Stage 1] Context signals: {result['csv_description']}")
-    print(f"\n[Stage 2] Emotion state:")
-    for k, v in result['asv_description'].items():
-        print(f"  {k}: {v}")
-    print(f"\n[Stage 3] DUR shape: {result['dur_shape']}")
-    print(f"\n[Stage 4] CUE shape: {result['cue_shape']}")
-    print(f"  Attention weights: {result['attention_weights']}")
-    print(f"\n[Stage 5] Mood: {result['mood_key']}")
-    print(f"  Preferred genres: {result['preferred_genres']}")
-    print(f"\nTop Recommendations:")
-    for i, r in enumerate(result['recommendations'], 1):
-        tag = " ✓" if r['mood_match'] else ""
-        print(f"  {i}. {r['title']} (score: {r['score']}){tag}")
+    print(f"Session saved with ID: {result['session_id']}")
+    print(f"Mood: {result['mood_key']}")
+    print(f"Top recommendations:")
+    for i, r in enumerate(result['recommendations'][:5], 1):
+        print(f"  {i}. {r['title']} (score: {r['score']})")
