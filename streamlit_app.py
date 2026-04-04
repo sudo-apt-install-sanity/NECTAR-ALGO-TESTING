@@ -5,6 +5,7 @@ sys.path.append(".")
 
 from pipeline import run_pipeline
 from modules.recommender import apply_feedback
+from modules.omdb_client import enrich_recommendations
 from database.db import initialize_db
 from database.queries import (
     get_all_users, get_or_create_user,
@@ -81,13 +82,15 @@ if run_btn:
             rewatch_ratio=rewatch_ratio, dwell_time=dwell_time,
             review_text=review_text, user_id=user_id, top_n=top_n
         )
-    st.session_state["result"]     = result
-    st.session_state["recs"]       = result["recommendations"]
-    st.session_state["session_id"] = result["session_id"]
+    st.session_state["result"]          = result
+    st.session_state["recs"]            = result["recommendations"]
+    st.session_state["session_id"]      = result["session_id"]
+    st.session_state["enriched_recs"]   = None
+    st.session_state["last_session_id"] = None
 
 # ── Main panel ────────────────────────────────────────────────
-tab1, tab2, tab3 = st.tabs(["📊 Pipeline Output", 
-                             "🕓 Session History", 
+tab1, tab2, tab3 = st.tabs(["📊 Pipeline Output",
+                             "🕓 Session History",
                              "⭐ My Feedback"])
 
 # ── Tab 1: Pipeline output ────────────────────────────────────
@@ -152,7 +155,7 @@ with tab1:
 
         st.divider()
 
-        # Recommendations
+        # ── Recommendations ───────────────────────────────────
         st.header("Stage 5 — Recommendations")
         st.caption(
             f"Mood: **{result['mood_key'].replace('_',' ')}** "
@@ -160,20 +163,47 @@ with tab1:
             f"{', '.join(result['preferred_genres'])}"
         )
 
-        for i, rec in enumerate(recs):
+        # Enrich top 5 with OMDB data (cached per session)
+        if not st.session_state.get("enriched_recs") or \
+           st.session_state.get("last_session_id") != st.session_state.get("session_id"):
+            with st.spinner("Fetching movie details..."):
+                st.session_state["enriched_recs"] = enrich_recommendations(recs[:5])
+                st.session_state["last_session_id"] = st.session_state.get("session_id")
+
+        enriched  = st.session_state["enriched_recs"]
+        remaining = recs[5:]
+
+        # Top 5 — rich cards with posters
+        for i, rec in enumerate(enriched):
             with st.container(border=True):
-                c1, c2, c3 = st.columns([4, 2, 2])
+                c1, c2, c3 = st.columns([1, 3, 2])
                 with c1:
+                    if rec.get("poster") and rec["poster"] != "N/A":
+                        st.image(rec["poster"], width=100)
+                    else:
+                        st.write("🎬")
+                with c2:
                     tag = "🎯 Mood match" if rec["mood_match"] else ""
                     st.markdown(f"**{i+1}. {rec['title']}** {tag}")
                     st.caption(", ".join(rec["genres"]))
-                with c2:
+                    if rec.get("plot") and rec["plot"] != "No description available.":
+                        st.write(rec["plot"][:120] + "...")
+                    col_a, col_b, col_c = st.columns(3)
+                    with col_a:
+                        if rec.get("rating") and rec["rating"] != "N/A":
+                            st.caption(f"⭐ IMDB: {rec['rating']}")
+                    with col_b:
+                        if rec.get("director") and rec["director"] != "N/A":
+                            st.caption(f"🎬 {rec['director']}")
+                    with col_c:
+                        if rec.get("runtime") and rec["runtime"] != "N/A":
+                            st.caption(f"⏱ {rec['runtime']}")
+                with c3:
                     st.metric("Score",      rec["score"])
                     st.metric("Similarity", rec["similarity"])
-                with c3:
                     stars = st.feedback("stars", key=f"stars_{i}")
                     if stars is not None:
-                        star_val = stars + 1
+                        star_val  = stars + 1
                         rated_key = f"rated_{i}_{st.session_state.get('session_id')}"
                         if not st.session_state.get(rated_key):
                             if st.session_state.get("session_id"):
@@ -189,6 +219,39 @@ with tab1:
                         )
                         st.session_state["recs"] = updated
                         st.rerun()
+
+        # Remaining movies — simple cards
+        if remaining:
+            st.subheader("More recommendations")
+            for i, rec in enumerate(remaining, start=5):
+                with st.container(border=True):
+                    c1, c2, c3 = st.columns([4, 2, 2])
+                    with c1:
+                        tag = "🎯 Mood match" if rec["mood_match"] else ""
+                        st.markdown(f"**{i+1}. {rec['title']}** {tag}")
+                        st.caption(", ".join(rec["genres"]))
+                    with c2:
+                        st.metric("Score",      rec["score"])
+                        st.metric("Similarity", rec["similarity"])
+                    with c3:
+                        stars = st.feedback("stars", key=f"stars_{i}")
+                        if stars is not None:
+                            star_val  = stars + 1
+                            rated_key = f"rated_{i}_{st.session_state.get('session_id')}"
+                            if not st.session_state.get(rated_key):
+                                if st.session_state.get("session_id"):
+                                    save_feedback(
+                                        st.session_state["session_id"],
+                                        rec["title"],
+                                        star_val
+                                    )
+                                st.session_state[rated_key] = True
+                            updated = apply_feedback(
+                                result["movies"], recs,
+                                rec["title"], star_val
+                            )
+                            st.session_state["recs"] = updated
+                            st.rerun()
 
 # ── Tab 2: Session history ────────────────────────────────────
 with tab2:
