@@ -174,14 +174,15 @@ with tab1:
                     stars = st.feedback("stars", key=f"stars_{i}")
                     if stars is not None:
                         star_val = stars + 1
-                        # Save to DB
-                        if st.session_state.get("session_id"):
-                            save_feedback(
-                                st.session_state["session_id"],
-                                rec["title"],
-                                star_val
-                            )
-                        # Update recommendations
+                        rated_key = f"rated_{i}_{st.session_state.get('session_id')}"
+                        if not st.session_state.get(rated_key):
+                            if st.session_state.get("session_id"):
+                                save_feedback(
+                                    st.session_state["session_id"],
+                                    rec["title"],
+                                    star_val
+                                )
+                            st.session_state[rated_key] = True
                         updated = apply_feedback(
                             result["movies"], recs,
                             rec["title"], star_val
