@@ -6,7 +6,18 @@ import time
 from dotenv import load_dotenv
 
 load_dotenv()
-API_KEY = os.getenv("OMDB_API_KEY")
+
+# Try Streamlit secrets first, then .env
+API_KEY = None
+try:
+    import streamlit as st
+    API_KEY = st.secrets.get("OMDB_API_KEY")
+except Exception:
+    pass
+
+if not API_KEY:
+    API_KEY = os.getenv("OMDB_API_KEY")
+
 BASE_URL = "http://www.omdbapi.com/"
 
 # Simple in-memory cache to avoid hitting API limits
@@ -52,6 +63,7 @@ def get_movie_data(title, year=None):
     _cache[cache_key] = result
     return result
 
+
 def _empty_result(title):
     return {
         "title":    title,
@@ -64,6 +76,7 @@ def _empty_result(title):
         "runtime":  "N/A",
         "language": "N/A",
     }
+
 
 def clean_title(raw_title):
     """
@@ -94,6 +107,7 @@ def clean_title(raw_title):
 
     return title.strip(), year
 
+
 def enrich_recommendations(recommendations, delay=0.1):
     """
     Take a list of recommendation dicts and add OMDB metadata to each.
@@ -116,11 +130,11 @@ def enrich_recommendations(recommendations, delay=0.1):
 
 if __name__ == "__main__":
     test_movies = [
-        {"title": "Inception (2010)",           "score": 0.95},
-        {"title": "Dark Knight, The (2008)",     "score": 0.91},
-        {"title": "Toy Story (1995)",            "score": 0.88},
-        {"title": "Matrix, The (1999)",          "score": 0.85},
-        {"title": "Schindler's List (1993)",     "score": 0.82},
+        {"title": "Inception (2010)",        "score": 0.95},
+        {"title": "Dark Knight, The (2008)", "score": 0.91},
+        {"title": "Toy Story (1995)",        "score": 0.88},
+        {"title": "Matrix, The (1999)",      "score": 0.85},
+        {"title": "Schindler's List (1993)", "score": 0.82},
     ]
 
     results = enrich_recommendations(test_movies)
