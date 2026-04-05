@@ -1,2 +1,4 @@
 .env
 nectar.db
+.streamlit/secrets.toml
+.streamlit/secrets.toml
